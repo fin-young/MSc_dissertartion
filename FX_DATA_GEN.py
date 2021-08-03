@@ -1,6 +1,8 @@
 #Data Processing
 import pandas as pd
 import numpy as np
+from numpy import hstack
+from numpy import array
 import datapackage
 import requests
 from functools import reduce
@@ -731,3 +733,57 @@ def Get_FX_MacEcon_Data(iso2):
     dataset = pd.merge(FX_Rates, Mac_Econ_data, on=['Yr','MoY'], how = 'inner')
     dataset.set_index(['Date'], inplace = True)
     return dataset
+
+def describe_MacEcon_TS(df):
+
+    columns = df.columns
+    firsts = []
+    lasts = []
+    nans = []
+    for i in range(len(columns)):
+        col = columns[i]
+        firsts.append(df[[col]].first_valid_index())
+        lasts.append(df[[col]].last_valid_index())
+        nans.append(df[[col]].isna().sum().item())
+    DF = pd.DataFrame({'Features':columns, 'First Valid':firsts, 'Last Valid':lasts, 'Null Values':nans})
+    return DF
+
+def Add_dummy_MoY(df):
+    dummy = pd.get_dummies(df['MoY'])
+    #cols = dummy.columns.to_numpy()
+    #cols = np.array_str(cols)
+    cols = []
+    for i in range(len(dummy.columns)):
+        cols.append(f"MoY_is_{i+1}")
+    
+    columns_dict = dict(zip(dummy.columns, cols))
+    dummy.rename(columns = columns_dict, inplace = True)
+    df.drop(columns=['MoY'],inplace=True)
+    df = df.merge(dummy, left_index=True, right_index=True)
+    return df
+
+def shift_FX(dataframe):
+    df = dataframe.copy()
+    Y_name = df.iloc[:,0].name
+    X_data = df[Y_name].shift(1)
+    X_name = Y_name+"_X"
+    new_name = Y_name+"_Y"
+    df[new_name] = df[Y_name].copy()    
+    df.rename(columns= {Y_name: X_name}, inplace = True)
+    df[X_name] = X_data
+    df = df.iloc[1: , :]   
+    return df
+def stack_sequences(df):
+    n_cols = df.shape[1]
+    n_rows = df.shape[0]
+    appended_series = []
+    for col in range(n_cols):
+        series = df.iloc[:,col].to_numpy().reshape(n_rows, 1)
+        appended_series.append(series)
+    stacked_array = hstack((appended_series))
+    return stacked_array
+
+def shift_and_stack(df):
+    dataframe = shift_FX(df)
+    array = stack_sequences(dataframe)
+    return array
