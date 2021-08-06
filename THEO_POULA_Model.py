@@ -65,3 +65,122 @@ class VGG(nn.Module):
                 in_channels = x
         layers += [nn.AvgPool2d(kernel_size=1, stride=1)]
         return nn.Sequential(*layers)
+
+class LSTMModel(nn.Module):
+    def __init__(self, input_dim, hidden_dim, seq_length, layer_dim, output_dim, dropout_prob):
+        super(LSTMModel, self).__init__()
+
+        # Defining the number of layers and the nodes in each layer
+        self.hidden_dim = hidden_dim
+        self.layer_dim = layer_dim
+        self.seq_len = seq_length
+
+        # LSTM layers
+        self.lstm = nn.LSTM(
+                            input_size=input_dim,
+                            hidden_size=hidden_dim,
+                            num_layers=layer_dim,
+                            batch_first=True,
+                            dropout=dropout_prob
+                            )
+
+        # Fully connected layer
+        #Edit from: nn.Linear(hidden_dim*self.seq_len, output_dim)
+        self.fc = nn.Linear(hidden_dim, output_dim)
+
+    #def init_hidden(self, batch_size):
+    #    # even with batch_first = True this remains same as docs
+    #    hidden_state = torch.zeros(self.layer_dim,batch_size,self.hidden_dim)
+    #    cell_state = torch.zeros(self.layer_dim,batch_size,self.hidden_dim)
+    #    self.hidden = (hidden_state, cell_state)
+
+    def forward(self, x):
+        #batch_size, seq_len, _ = x.size()
+        # Initializing hidden state for first input with zeros
+        #Should x.size(0) be batch_size? 
+        hidden_state = torch.zeros(self.layer_dim, x.size(0), self.hidden_dim).requires_grad_()
+
+        # Initializing cell state for first input with zeros
+        cell_state = torch.zeros(self.layer_dim, x.size(0), self.hidden_dim).requires_grad_()
+
+        # We need to detach as we are doing truncated backpropagation through time (BPTT)
+        # If we don't, we'll backprop all the way to the start even after going through another batch
+        # Forward propagation by passing in the input, hidden state, and cell state into the model
+        lstm_out, (hn, cn) = self.lstm(x, (hidden_state.detach(), cell_state.detach()))
+        #lstm_out, self.hidden = self.lstm(x,self.hidden)
+        # Reshaping the outputs in the shape of (batch_size, seq_length, hidden_size)
+        # so that it can fit into the fully connected layer
+        
+        Lstm_out = lstm_out[:, -1, :]
+        #x = lstm_out.contiguous().view(batch_size,-1)
+        # Convert the final state to our desired output shape (batch_size, output_dim)
+        lstm_out = self.fc(lstm_out)
+
+        return lstm_out
+
+def get_model(model, model_params):
+    models = {
+        "rnn": RNNModel,
+        "lstm": LSTMModel,
+        "gru": GRUModel,
+    }
+    return models.get(model.lower())(**model_params)
+
+class RNNModel(nn.Module):
+    def __init__(self, input_dim, hidden_dim, layer_dim, output_dim, dropout_prob):
+        super(RNNModel, self).__init__()
+
+        # Defining the number of layers and the nodes in each layer
+        self.hidden_dim = hidden_dim
+        self.layer_dim = layer_dim
+
+        # RNN layers
+        self.rnn = nn.RNN(
+            input_dim, hidden_dim, layer_dim, batch_first=True, dropout=dropout_prob
+        )
+        # Fully connected layer
+        self.fc = nn.Linear(hidden_dim, output_dim)
+
+    def forward(self, x):
+        # Initializing hidden state for first input with zeros
+        h0 = torch.zeros(self.layer_dim, x.size(0), self.hidden_dim).requires_grad_()
+
+        # Forward propagation by passing in the input and hidden state into the model
+        out, h0 = self.rnn(x, h0.detach())
+
+        # Reshaping the outputs in the shape of (batch_size, seq_length, hidden_size)
+        # so that it can fit into the fully connected layer
+        out = out[:, -1, :]
+
+        # Convert the final state to our desired output shape (batch_size, output_dim)
+        out = self.fc(out)
+        return out
+class GRUModel(nn.Module):
+    def __init__(self, input_dim, hidden_dim, layer_dim, output_dim, dropout_prob):
+        super(GRUModel, self).__init__()
+
+        # Defining the number of layers and the nodes in each layer
+        self.layer_dim = layer_dim
+        self.hidden_dim = hidden_dim
+
+        # GRU layers
+        self.gru = nn.GRU(
+            input_dim, hidden_dim, layer_dim, batch_first=True, dropout=dropout_prob
+        )
+
+        # Fully connected layer
+        self.fc = nn.Linear(hidden_dim, output_dim)
+
+    def forward(self, x):
+        # Initializing hidden state for first input with zeros
+        h0 = torch.zeros(self.layer_dim, x.size(0), self.hidden_dim).requires_grad_()
+
+        # Forward propagation by passing in the input and hidden state into the model
+        out, _ = self.gru(x, h0.detach())
+
+        # Reshaping the outputs in the shape of (batch_size, seq_length, hidden_size)
+        # so that it can fit into the fully connected layer
+        out = out[:, -1, :]
+
+        # Convert the final state to our desired output shape (batch_size, output_dim)
+        out = self.fc(out)
