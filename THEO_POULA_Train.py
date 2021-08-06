@@ -11,7 +11,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.tensorboard import SummaryWriter
 import matplotlib.pyplot as plt
-from THEO_POULA_Model import VGG
+from THEO_POULA_Model import VGG, LSTMModel
 import pickle as pkl
 import argparse
 from THEO_POULA_Optim import THEOPOULA
@@ -32,8 +32,8 @@ parser.add_argument('--r', default=5, type=int)
 parser.add_argument('--eps', default=1e-4, type=float)
 parser.add_argument('--act_fn', default='silu', type=str)
 
-parser.add_argument('--log_dir', default='./log_CIFAR/', type=str)
-parser.add_argument('--ckpt_dir', default='./ckpt_CIFAR/', type=str)
+parser.add_argument('--log_dir', default='./log/', type=str)
+parser.add_argument('--ckpt_dir', default='./ckpt/', type=str)
 
 args = parser.parse_args()
 
