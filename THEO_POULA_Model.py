@@ -111,8 +111,8 @@ class LSTMModel(nn.Module):
         # Reshaping the outputs in the shape of (batch_size, seq_length, hidden_size)
         # so that it can fit into the fully connected layer
         
-        Lstm_out = lstm_out[:, -1, :]
-        #x = lstm_out.contiguous().view(batch_size,-1)
+        lstm_out = lstm_out[:, -1, :]
+        
         # Convert the final state to our desired output shape (batch_size, output_dim)
         lstm_out = self.fc(lstm_out)
 
