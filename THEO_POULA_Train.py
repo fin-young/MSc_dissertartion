@@ -11,12 +11,10 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.tensorboard import SummaryWriter
 import matplotlib.pyplot as plt
-from THEO_POULA_Model import VGG, LSTMModel
+from THEO_POULA_Model import VGG, LSTMModel, get_model
 import pickle as pkl
 import argparse
 from THEO_POULA_Optim import THEOPOULA
-
-os.environ["KMP_DUPLICATE_LIB_OK"]="TRUE"
 
 parser = argparse.ArgumentParser(description = 'pytorch CIFAR10')
 parser.add_argument('--trial', default='trial1', type=str)
@@ -31,7 +29,6 @@ parser.add_argument('--beta', default='1e14', type=float)
 parser.add_argument('--r', default=5, type=int)
 parser.add_argument('--eps', default=1e-4, type=float)
 parser.add_argument('--act_fn', default='silu', type=str)
-
 parser.add_argument('--log_dir', default='./log/', type=str)
 parser.add_argument('--ckpt_dir', default='./ckpt/', type=str)
 
@@ -233,3 +230,31 @@ torch.save(state, './%s/%s.pth' % (ckpt_dir, experiment_name))
 
 
 #plt.show()
+
+class THEO_POULA_TRAIN:
+    def __init__(self, model,loss_fn, optimizer_name):
+        self.model = model
+        self.loss_fn = loss_fn
+        self.train_losses = []
+        self.val_losses = []
+        self.optimizer = optimizer
+        
+        self.fn_acc = lambda pred, label: torch.sqrt(criterion(pred, label))
+
+    def train(self, epoch,train_loader, batch_size, n_features):
+        print('\nEpoch: %d' % epoch)
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.model.train() # Set Model to Train Mode
+        for batch_idx, (inputs, targets) in enumerate(train_loader):
+            inputs = inputs.view([batch_size, -1, n_features]).to(device)
+            targets = targets.to(device)
+            optimizer.zero_grad()        
+            outputs = net(inputs)
+            outputs = torch.flatten(outputs)
+            loss = criterion(outputs, targets)
+            acc = self.fn_acc(outputs, targets)
+
+            loss.backward()
+            optimizer.step()
+            train_loss += [loss.item()]
+            acc_arr += [acc.item()]
