@@ -732,6 +732,14 @@ def Get_FX_MacEcon_Data(iso2):
     Mac_Econ_data = MacEcon_TS(iso2=iso2, start=1980, finish=2020)
     dataset = pd.merge(FX_Rates, Mac_Econ_data, on=['Yr','MoY'], how = 'inner')
     dataset.set_index(['Date'], inplace = True)
+    #Change FX rate to 90 Rolling average
+    fx_field = dataset.iloc[:,0].name
+    roll30 = fx_field+'_30_ave'
+    roll60 = fx_field+'_60_ave'
+    dataset[roll30] = dataset[fx_field].rolling(30).mean()
+    dataset[roll60] = dataset[fx_field].rolling(60).mean()
+    dataset[fx_field] = dataset[fx_field].rolling(90).mean()
+    dataset.dropna(axis=0, subset=[fx_field], inplace = True)
     return dataset
 
 def describe_MacEcon_TS(df):
