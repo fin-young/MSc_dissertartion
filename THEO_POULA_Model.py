@@ -95,13 +95,14 @@ class LSTMModel(nn.Module):
     #    self.hidden = (hidden_state, cell_state)
 
     def forward(self, x):
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         #batch_size, seq_len, _ = x.size()
         # Initializing hidden state for first input with zeros
         #Should x.size(0) be batch_size? 
-        hidden_state = torch.zeros(self.layer_dim, x.size(0), self.hidden_dim).requires_grad_()
+        hidden_state = torch.zeros(self.layer_dim, x.size(0), self.hidden_dim).requires_grad_().to(device)
 
         # Initializing cell state for first input with zeros
-        cell_state = torch.zeros(self.layer_dim, x.size(0), self.hidden_dim).requires_grad_()
+        cell_state = torch.zeros(self.layer_dim, x.size(0), self.hidden_dim).requires_grad_().to(device)
 
         # We need to detach as we are doing truncated backpropagation through time (BPTT)
         # If we don't, we'll backprop all the way to the start even after going through another batch
@@ -116,7 +117,7 @@ class LSTMModel(nn.Module):
         # Convert the final state to our desired output shape (batch_size, output_dim)
         lstm_out = self.fc(lstm_out)
 
-        return lstm_out
+        return lstm_out.to(device)
 
 def get_model(model, model_params):
     models = {
