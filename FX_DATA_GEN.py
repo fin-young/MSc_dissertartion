@@ -737,10 +737,12 @@ def Get_FX_MacEcon_Data(iso2):
     roll30 = fx_field+'_30_ave'
     roll60 = fx_field+'_60_ave'
     roll90 = fx_field+'_90_ave'
+    pred = fx_field+'_30_pred'
     dataset[roll30] = dataset[fx_field].rolling(30).mean()
     dataset[roll60] = dataset[fx_field].rolling(60).mean()
     dataset[roll90] = dataset[fx_field].rolling(90).mean()
-    dataset.dropna(axis=0, subset=[roll90], inplace = True)
+    dataset[pred] = dataset[roll30].shift(-30)
+    dataset.dropna(axis=0, subset=[roll90, pred], inplace = True)
     return dataset
 
 def describe_MacEcon_TS(df):
