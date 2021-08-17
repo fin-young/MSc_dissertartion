@@ -15,7 +15,7 @@ from THEO_POULA_Model import VGG, LSTMModel, get_model
 import pickle as pkl
 import argparse
 from THEO_POULA_Optim import THEOPOULA
-
+'''
 parser = argparse.ArgumentParser(description = 'pytorch CIFAR10')
 parser.add_argument('--trial', default='trial1', type=str)
 parser.add_argument('--lr', default=1e-2, type=float, help='learning rate')
@@ -230,31 +230,125 @@ torch.save(state, './%s/%s.pth' % (ckpt_dir, experiment_name))
 
 
 #plt.show()
+'''
 
 class THEO_POULA_TRAIN:
-    def __init__(self, model,loss_fn, optimizer_name):
+    def __init__(self, model, optimizer, log_dir, ckpt_dir,experiment_name):
         self.model = model
-        self.loss_fn = loss_fn
-        self.train_losses = []
-        self.val_losses = []
+        #self.loss_fn = loss_fn
+        self.history = {'training_loss': [],
+                        'test_loss': [],
+                        'training_acc': [],
+                        'test_acc': [],
+                        }
+
+        self.writer = SummaryWriter(log_dir=log_dir)
         self.optimizer = optimizer
+        self.log_dir = log_dir
+        self.ckpt_dir = ckpt_dir
+        self.experiment_name = experiment_name
         
-        self.fn_acc = lambda pred, label: torch.sqrt(criterion(pred, label))
+        self.criterion = nn.MSELoss(reduction='mean')
+        self.fn_acc = lambda pred, label: torch.sqrt(self.criterion(pred, label))
+        
+        self.best_loss = 999
+        self.state = []
 
     def train(self, epoch,train_loader, batch_size, n_features):
         print('\nEpoch: %d' % epoch)
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.model.train() # Set Model to Train Mode
+        train_loss = []
+        acc_arr = []
+
+        num_data = len(train_loader)
+        num_batch = np.ceil(num_data / batch_size)
+
         for batch_idx, (inputs, targets) in enumerate(train_loader):
             inputs = inputs.view([batch_size, -1, n_features]).to(device)
             targets = targets.to(device)
-            optimizer.zero_grad()        
-            outputs = net(inputs)
+            self.optimizer.zero_grad()        
+            outputs = self.model(inputs)
             outputs = torch.flatten(outputs)
-            loss = criterion(outputs, targets)
+            loss = self.criterion(outputs, targets)
             acc = self.fn_acc(outputs, targets)
 
             loss.backward()
-            optimizer.step()
+            self.optimizer.step()
             train_loss += [loss.item()]
             acc_arr += [acc.item()]
+            if batch_idx%50 == 0:
+                print('TRAIN: EPOCH %04d | BATCH %04d/%04d | LOSS: %.4f |  ACC %.4f' %
+                (epoch, batch_idx, num_batch, train_loss[-1], acc_arr[-1]))
+        print('TRAIN: EPOCH %04d| LOSS: %.4f |  ACC %.4f' %
+          (epoch, np.mean(train_loss), np.mean(acc_arr)))
+        self.writer.add_scalar('Training loss', np.mean(train_loss), epoch)
+        self.writer.add_scalar('Training accuracy', np.mean(acc_arr), epoch)
+
+        self.history['training_loss'].append(np.mean(train_loss))
+        self.history['training_acc'].append(np.mean(acc_arr))
+
+    def test(self, epoch,test_loader, batch_size, n_features):
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.model.eval() #Set model to evaluate
+        test_loss = []
+        acc_arr = []
+
+        with torch.no_grad():
+            for batch_idx, (inputs, targets) in enumerate(test_loader):
+                inputs = inputs.view([batch_size, -1, n_features]).to(device)
+                targets = targets.to(device)
+                outputs = self.model(inputs)
+
+                pred = torch.flatten(outputs)
+                loss = self.criterion(outputs, targets)
+                acc = self.fn_acc(pred, targets)
+
+                test_loss += [loss.item()]
+                acc_arr += [acc.item()]
+
+            print('TEST:  LOSS: %.4f |  ACC %.4f' %
+                    (np.mean(test_loss),  np.mean(acc_arr)))
+
+        if np.mean(test_loss) < self.best_loss:
+            print('Saving..')
+            state = {
+                'net': self.model.state_dict(),
+                'acc': np.mean(test_loss),
+                'epoch': epoch,
+                'optim': self.optimizer.state_dict()
+            }
+            self.best_loss = np.mean(test_loss)
+
+        self.writer.add_scalar('Test loss', np.mean(test_loss), epoch)
+        self.writer.add_scalar('Test accuracy', np.mean(acc_arr), epoch)
+
+        self.history['test_loss'].append(np.mean(test_loss))
+        self.history['test_acc'].append(np.mean(acc_arr))
+    
+    def activate(self, num_epoch,train_loader, test_loader, batch_size, n_features):
+        start_epoch = 1
+        scheduler = optim.lr_scheduler.StepLR(self.optimizer, step_size=200, gamma=0.1)
+        for epoch in range(start_epoch, start_epoch + num_epoch):
+            self.train(epoch, train_loader, batch_size, n_features)
+            self.test(epoch, test_loader, batch_size, n_features)
+            scheduler.step()
+        #elapsed_time = time.time() - start_time
+        #print(elapsed_time)
+
+        fig, ax = plt.subplots(nrows = 1, ncols = 1)
+        ax.plot(range(1, num_epoch+1), self.history['training_loss'], label='Training Loss')
+        ax.plot(range(1, num_epoch+1), self.history['test_loss'], label='Test Loss')
+        ax.set_xlabel('Epochs')
+        ax.set_ylabel('Loss')
+        ax.legend()
+
+        if not os.path.isdir(self.log_dir):
+            os.mkdir(self.log_dir)
+        pkl.dump(self.history, open(self.log_dir+'/history.pkl', 'wb'))
+        #pkl.dump(fig, open(self.log_dir+'/Loss_plot.pkl', 'wb'))
+
+        if not os.path.isdir(self.ckpt_dir):
+            os.makedirs(self.ckpt_dir)
+        torch.save(self.state, './%s/%s.pth' % (self.ckpt_dir, self.experiment_name))
+        plt.show()
