@@ -14,7 +14,8 @@ import matplotlib.pyplot as plt
 from THEO_POULA_Model import VGG, LSTMModel, get_model
 import pickle as pkl
 import argparse
-from THEO_POULA_Optim import THEOPOULA
+#from THEO_POULA_Optim import THEOPOULA
+from Theopoula import THEOPOULA
 '''
 parser = argparse.ArgumentParser(description = 'pytorch CIFAR10')
 parser.add_argument('--trial', default='trial1', type=str)
@@ -233,7 +234,7 @@ torch.save(state, './%s/%s.pth' % (ckpt_dir, experiment_name))
 '''
 
 class THEO_POULA_TRAIN:
-    def __init__(self, model, optimizer, log_dir, ckpt_dir,experiment_name):
+    def __init__(self, model,model_name, optimizer_name, opt_params, batch_size, num_epoch,curr_code):
         self.model = model
         #self.loss_fn = loss_fn
         self.history = {'training_loss': [],
@@ -242,19 +243,47 @@ class THEO_POULA_TRAIN:
                         'test_acc': [],
                         }
 
-        self.writer = SummaryWriter(log_dir=log_dir)
-        self.optimizer = optimizer
-        self.log_dir = log_dir
-        self.ckpt_dir = ckpt_dir
-        self.experiment_name = experiment_name
+        #Define Optimizer
+        lr=opt_params['lr']
+        eta=opt_params['eta']
+        beta=opt_params['beta']
+        r=opt_params['r']
+        eps=opt_params['eps']
+        weight_decay=opt_params['weight_decay']
+        self.batch_size = batch_size
+        self.num_epoch = num_epoch
+
+        if optimizer_name == 'SGD':
+            self.optimizer = optim.SGD(self.model.parameters(), lr=lr)
+        elif optimizer_name == 'RMSProp':
+            self.optimizer = optim.RMSprop(self.model.parameters(),lr=lr)
+        elif optimizer_name == 'ADAM':
+            self.optimizer = optim.Adam(self.model.parameters(), lr=lr)
+        elif optimizer_name == 'AMSGrad':
+            self.optimizer = optim.Adam(self.model.parameters(), lr=lr, amsgrad=True)
+        elif optimizer_name == 'THEOPOULA':
+            self.optimizer = THEOPOULA(self.model.parameters(), lr=lr, eta=eta, beta=beta, r=r, eps=eps,weight_decay=weight_decay)
+        #Set Directory Names
+        if optimizer_name == 'THEOPOULA':
+            self.experiment_name = '%s_%s_bs{%d}_lr{%.1e}_epoch{%d}_eta{%.1e}_beta{%.1e}_r{%d}_eps{%.1e}' \
+                      %(optimizer_name, model_name, self.batch_size, lr, self.num_epoch, eta, beta, r, eps)
+        else:
+            self.experiment_name = '%s_%s_bs{%d}_lr{%.1e}_eps{%.1e}_epoch{%d}'%(optimizer_name, model_name, self.batch_size, lr, eps, self.num_epoch)
         
+        log_dir = './log/'
+        ckpt_dir = './ckpt/'
+        cur_dir = curr_code+'/'
+        self.log_dir = log_dir + cur_dir + self.experiment_name
+        self.ckpt_dir = ckpt_dir + cur_dir + self.experiment_name
+        self.writer = SummaryWriter(log_dir=self.log_dir)
+
         self.criterion = nn.MSELoss(reduction='mean')
         self.fn_acc = lambda pred, label: torch.sqrt(self.criterion(pred, label))
         
         self.best_loss = 999
         self.state = []
 
-    def train(self, epoch,train_loader, batch_size, n_features):
+    def train(self, epoch,train_loader,  n_features):
         print('\nEpoch: %d' % epoch)
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.model.train() # Set Model to Train Mode
@@ -262,10 +291,10 @@ class THEO_POULA_TRAIN:
         acc_arr = []
 
         num_data = len(train_loader)
-        num_batch = np.ceil(num_data / batch_size)
+        num_batch = np.ceil(num_data / self.batch_size)
 
         for batch_idx, (inputs, targets) in enumerate(train_loader):
-            inputs = inputs.view([batch_size, -1, n_features]).to(device)
+            inputs = inputs.view([self.batch_size, -1, n_features]).to(device)
             targets = targets.to(device)
             self.optimizer.zero_grad()        
             outputs = self.model(inputs)
@@ -288,7 +317,7 @@ class THEO_POULA_TRAIN:
         self.history['training_loss'].append(np.mean(train_loss))
         self.history['training_acc'].append(np.mean(acc_arr))
 
-    def test(self, epoch,test_loader, batch_size, n_features):
+    def test(self, epoch,test_loader, n_features):
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.model.eval() #Set model to evaluate
         test_loss = []
@@ -296,7 +325,7 @@ class THEO_POULA_TRAIN:
 
         with torch.no_grad():
             for batch_idx, (inputs, targets) in enumerate(test_loader):
-                inputs = inputs.view([batch_size, -1, n_features]).to(device)
+                inputs = inputs.view([self.batch_size, -1, n_features]).to(device)
                 targets = targets.to(device)
                 outputs = self.model(inputs)
 
@@ -326,19 +355,19 @@ class THEO_POULA_TRAIN:
         self.history['test_loss'].append(np.mean(test_loss))
         self.history['test_acc'].append(np.mean(acc_arr))
     
-    def activate(self, num_epoch,train_loader, test_loader, batch_size, n_features):
+    def activate(self,train_loader, test_loader, n_features):
         start_epoch = 1
         scheduler = optim.lr_scheduler.StepLR(self.optimizer, step_size=200, gamma=0.1)
-        for epoch in range(start_epoch, start_epoch + num_epoch):
-            self.train(epoch, train_loader, batch_size, n_features)
-            self.test(epoch, test_loader, batch_size, n_features)
+        for epoch in range(start_epoch, start_epoch + self.num_epoch):
+            self.train(epoch, train_loader, n_features)
+            self.test(epoch, test_loader, n_features)
             scheduler.step()
         #elapsed_time = time.time() - start_time
         #print(elapsed_time)
 
         fig, ax = plt.subplots(nrows = 1, ncols = 1)
-        ax.plot(range(1, num_epoch+1), self.history['training_loss'], label='Training Loss')
-        ax.plot(range(1, num_epoch+1), self.history['test_loss'], label='Test Loss')
+        ax.plot(range(1, self.num_epoch+1), self.history['training_loss'], label='Training Loss')
+        ax.plot(range(1, self.num_epoch+1), self.history['test_loss'], label='Test Loss')
         ax.set_xlabel('Epochs')
         ax.set_ylabel('Loss')
         ax.legend()
@@ -352,3 +381,18 @@ class THEO_POULA_TRAIN:
             os.makedirs(self.ckpt_dir)
         torch.save(self.state, './%s/%s.pth' % (self.ckpt_dir, self.experiment_name))
         plt.show()
+    def evaluate(self, test_loader_one,n_features):
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        with torch.no_grad():
+            predictions = []
+            values = []
+            for x_test, y_test in test_loader_one:
+                x_test = x_test.view([1, -1, n_features]).to(device)
+                y_test = y_test.to(device)
+                self.model.eval()
+                yhat = self.model(x_test)
+                yhat = torch.flatten(yhat).detach().cpu()
+                predictions.append(yhat.numpy())
+                y_test=y_test.to(device).detach().cpu()
+                values.append(y_test.numpy())
+        return predictions, values
