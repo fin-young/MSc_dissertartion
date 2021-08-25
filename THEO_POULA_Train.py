@@ -341,7 +341,7 @@ class THEO_POULA_TRAIN:
 
         if np.mean(test_loss) < self.best_loss:
             print('Saving..')
-            state = {
+            self.state = {
                 'net': self.model.state_dict(),
                 'acc': np.mean(test_loss),
                 'epoch': epoch,
