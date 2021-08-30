@@ -571,6 +571,7 @@ def MacEcon_TS(iso2,start, finish):
     Full.drop(columns =filtered_list, inplace = True )
     Full.sort_values(by=['Yr', 'MoY'], inplace = True)
     Full = Full.iloc[:-1 , :]
+    Full.dropna(subset=['MoY'],axis=0,inplace=True) # Added for MY & CZ
     Full['MoY']=Full['MoY'].astype(int)
     Full['Date']=pd.to_datetime([f'{y}-{m}-01' for y, m in zip(Full.Yr, Full.MoY)])
     
@@ -737,12 +738,21 @@ def Get_FX_MacEcon_Data(iso2):
     roll30 = fx_field+'_30_ave'
     roll60 = fx_field+'_60_ave'
     roll90 = fx_field+'_90_ave'
-    pred = fx_field+'_30_pred'
+    pred = fx_field+'_classifier'
+    basis = fx_field+'_90d_change'
     dataset[roll30] = dataset[fx_field].rolling(30).mean()
     dataset[roll60] = dataset[fx_field].rolling(60).mean()
     dataset[roll90] = dataset[fx_field].rolling(90).mean()
-    dataset[pred] = dataset[roll30].shift(-30)
-    dataset.dropna(axis=0, subset=[roll90, pred], inplace = True)
+    dataset[basis] = dataset[fx_field].shift(-90).pct_change(90)
+    dataset.dropna(axis=0, subset=[roll90, basis], inplace = True)
+    cut_labels = ['Large Appreciation',
+                    'Small Appreciation',
+                    'Small deppreciation',
+                    'Low Crash Confidence',
+                    'Medium Crash Confidence',
+                    'High Crash Confidence']
+    cuts = [float('-inf'),-0.05,0.0,0.05,0.1,0.15,float('inf')]
+    dataset[pred]= pd.cut(dataset[basis] ,bins=cuts,labels=cut_labels)
     return dataset
 
 def describe_MacEcon_TS(df):
@@ -798,3 +808,16 @@ def shift_and_stack(df):
     dataframe = shift_FX(df)
     array = stack_sequences(dataframe)
     return array
+
+def Get_country_name(CURR_CODE):
+    data_url = 'https://datahub.io/core/country-codes/datapackage.json'
+    # to load Data Package into storage
+    package = datapackage.Package(data_url)
+    # to load only tabular data
+    resources = package.resources
+    for resource in resources:
+        if resource.tabular:
+            comp_countries = pd.read_csv(resource.descriptor['path'])
+    trial = comp_countries[['CLDR display name','ISO4217-currency_alphabetic_code']]
+    Country_Name = trial['CLDR display name'][trial['ISO4217-currency_alphabetic_code']==CURR_CODE].item()
+    return Country_Name
