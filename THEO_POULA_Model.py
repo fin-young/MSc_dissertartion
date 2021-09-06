@@ -87,7 +87,7 @@ class LSTMModel(nn.Module):
         # Fully connected layer
         #Edit from: nn.Linear(hidden_dim*self.seq_len, output_dim)
         self.fc = nn.Linear(hidden_dim, output_dim)
-
+        self.drop = nn.Dropout(dropout_prob)
     #def init_hidden(self, batch_size):
     #    # even with batch_first = True this remains same as docs
     #    hidden_state = torch.zeros(self.layer_dim,batch_size,self.hidden_dim)
@@ -124,6 +124,7 @@ def get_model(model, model_params):
         "rnn": RNNModel,
         "lstm": LSTMModel,
         "gru": GRUModel,
+        "lstm_Classifier": LSTMClassifier
     }
     return models.get(model.lower())(**model_params)
 
@@ -185,3 +186,27 @@ class GRUModel(nn.Module):
 
         # Convert the final state to our desired output shape (batch_size, output_dim)
         out = self.fc(out)
+
+class LSTMClassifier(nn.Module):
+    """Very simple implementation of LSTM-based time-series classifier."""
+    
+    def __init__(self, input_dim, hidden_dim, layer_dim, output_dim):
+        super().__init__()
+        self.hidden_dim = hidden_dim
+        self.layer_dim = layer_dim
+        self.LSTM = nn.LSTM(input_dim, hidden_dim, layer_dim, batch_first=True)
+        self.fc = nn.Linear(hidden_dim, output_dim)
+        self.batch_size = None
+        self.hidden = None
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    
+    def forward(self, x):
+        h0, c0 = self.init_hidden(x)
+        out, (hn, cn) = self.LSTM(x, (h0, c0))
+        out = self.fc(out[:, -1, :])
+        return out.to(self.device)
+    
+    def init_hidden(self, x):
+        h0 = torch.zeros(self.layer_dim, x.size(0), self.hidden_dim).requires_grad_().to(self.device)
+        c0 = torch.zeros(self.layer_dim, x.size(0), self.hidden_dim).requires_grad_().to(self.device)
+        return h0, c0
