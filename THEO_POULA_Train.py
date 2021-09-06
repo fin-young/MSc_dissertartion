@@ -14,8 +14,12 @@ import matplotlib.pyplot as plt
 from THEO_POULA_Model import VGG, LSTMModel, get_model
 import pickle as pkl
 import argparse
+from sklearn.metrics import classification_report
+from sklearn.preprocessing import LabelEncoder
+from sklearn.utils.class_weight import compute_class_weight
 #from THEO_POULA_Optim import THEOPOULA
 from Theopoula import THEOPOULA
+import pandas as pd
 '''
 parser = argparse.ArgumentParser(description = 'pytorch CIFAR10')
 parser.add_argument('--trial', default='trial1', type=str)
@@ -396,3 +400,221 @@ class THEO_POULA_TRAIN:
                 y_test=y_test.to(device).detach().cpu()
                 values.append(y_test.numpy())
         return predictions, values
+
+class Classify_Train:
+    def __init__(self, model,model_name, optimizer_name, opt_params, batch_size, num_epoch,curr_code, encoder,training_weights):
+        
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.model = model
+        #self.loss_fn = loss_fn
+        self.history = {'training_loss': [],
+                        'test_loss': [],
+                        'training_acc': [],
+                        'test_acc': [],
+                        }
+
+        #Define Optimizer
+        lr=opt_params['lr']
+        eta=opt_params['eta']
+        beta=opt_params['beta']
+        r=opt_params['r']
+        eps=opt_params['eps']
+        weight_decay=opt_params['weight_decay']
+        self.batch_size = batch_size
+        self.num_epoch = num_epoch
+        self.encoder=encoder
+
+        if optimizer_name == 'SGD':
+            self.optimizer = optim.SGD(self.model.parameters(), lr=lr)
+        elif optimizer_name == 'RMSProp':
+            self.optimizer = optim.RMSprop(self.model.parameters(),lr=lr)
+        elif optimizer_name == 'ADAM':
+            self.optimizer = optim.Adam(self.model.parameters(), lr=lr)
+        elif optimizer_name == 'AMSGrad':
+            self.optimizer = optim.Adam(self.model.parameters(), lr=lr, amsgrad=True)
+        elif optimizer_name == 'THEOPOULA':
+            self.optimizer = THEOPOULA(self.model.parameters(), lr=lr, eta=eta, beta=beta, r=r, eps=eps,weight_decay=weight_decay)
+        #Set Directory Names
+        if optimizer_name == 'THEOPOULA':
+            self.experiment_name = 'CLX%s_%s_bs{%d}_lr{%.1e}_ech{%d}_eta{%.1e}_beta{%.1e}_r{%d}_eps{%.1e}' \
+                      %(optimizer_name, model_name, self.batch_size, lr, self.num_epoch, eta, beta, r, eps)
+        else:
+            self.experiment_name = 'CLX%s_%s_bs{%d}_lr{%.1e}_eps{%.1e}_ech{%d}'%(optimizer_name, model_name, self.batch_size, lr, eps, self.num_epoch)
+        
+        log_dir = './log/'
+        ckpt_dir = './ckpt/'
+        cur_dir = curr_code+'/'
+        self.log_dir = log_dir + cur_dir + self.experiment_name
+        self.ckpt_dir = ckpt_dir + cur_dir + self.experiment_name
+        self.writer = SummaryWriter(log_dir=self.log_dir)
+
+        self.class_weights = (torch.tensor(training_weights,dtype=torch.float)).to(device)
+        self.criterion = nn.CrossEntropyLoss(weight=self.class_weights,reduction='mean')
+        self.fn_acc = lambda pred, label: torch.sqrt(self.criterion(pred, label))
+        self.fn_pred = lambda output: F.log_softmax(output, dim=1).argmax(dim=1)
+        
+        self.best_loss = 999
+        self.best_acc = 0
+        self.state = []
+
+    def train(self, epoch,train_loader,  n_features):
+        print('\nEpoch: %d' % epoch)
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.model.train() # Set Model to Train Mode
+        train_loss = []
+        acc_arr = []
+        total_i, acc_i =0,0
+        num_data = len(train_loader)
+        num_batch = np.ceil(num_data / self.batch_size)        
+        
+        for batch_idx, (inputs, targets) in enumerate(train_loader):
+            inputs = inputs.view([self.batch_size, -1, n_features]).to(device)
+            targets = targets.to(device)
+            targets = targets.type(torch.LongTensor) #Change classifiers from Int to LongTensor
+            self.optimizer.zero_grad()        
+            outputs = self.model(inputs) #Get Logits from Model
+            loss = self.criterion(outputs, targets) # Weighted Cross Entropy Loss of Logits vs Target labels
+            pred = self.fn_pred(outputs) #Log Softmax of Logits to display predicted label
+            
+            total_i = targets.size(0)
+            correct_i = (pred == targets).sum().item()
+            acc_i = correct_i / total_i
+            loss.backward()
+            self.optimizer.step()
+            train_loss += [loss.item()]
+            acc_arr += [acc_i]
+
+            if batch_idx%50 == 0:
+                print('TRAIN: EPOCH %04d | BATCH %04d/%04d|LOSS: %.4f | Correct %.4f  |total %.4f  |ACC %.4f'%
+                (epoch, batch_idx, num_batch, train_loss[-1],correct_i,total_i,np.mean(acc_arr)))
+
+        print('TRAIN: EPOCH %04d| LOSS: %.4f |  ACC %.4f' %
+          (epoch, np.mean(train_loss), np.mean(acc_arr)))
+        self.writer.add_scalar('Training loss', np.mean(train_loss), epoch)
+        self.writer.add_scalar('Training accuracy', np.mean(acc_arr), epoch)
+
+        self.history['training_loss'].append(np.mean(train_loss))
+        self.history['training_acc'].append(np.mean(acc_arr))
+
+    def test(self, epoch,test_loader, n_features):
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.model.eval() #Set model to evaluate
+        test_loss = []
+        acc_arr = []
+        total_i,acc_i=0,0
+        with torch.no_grad():
+            for batch_idx, (inputs, targets) in enumerate(test_loader):
+                inputs = inputs.view([self.batch_size, -1, n_features]).to(device)
+                targets = targets.to(device)
+                outputs = self.model(inputs) #Get Logits from Model
+                targets = targets.type(torch.LongTensor) #Change classifiers from Int to LongTensor
+
+                loss = self.criterion(outputs, targets) # Weighted Cross Entropy Loss of Logits vs Target labels
+                pred = self.fn_pred(outputs)    #Log Softmax of Logits to display predicted label           
+                total_i = targets.size(0)
+                correct_i = (pred == targets).sum().item()
+                acc_i = correct_i / total_i
+                test_loss += [loss.item()]
+                acc_arr += [acc_i]
+               
+            print('TEST:  LOSS: %.4f | Correct %.4f  |total %.4f  |  ACC %.4f' %
+                    (np.mean(test_loss), correct_i,total_i, np.mean(acc_arr)))
+
+        if np.mean(acc_arr) > self.best_acc:
+            print('Saving..')
+            self.state = {
+                'net': self.model.state_dict(),
+                'acc': np.mean(acc_arr),
+                'epoch': epoch,
+                'optim': self.optimizer.state_dict()
+            }
+            self.best_loss = np.mean(test_loss)
+            self.best_acc = np.mean(acc_arr)
+            
+        self.writer.add_scalar('Test loss', np.mean(test_loss), epoch)
+        self.writer.add_scalar('Test accuracy', np.mean(acc_arr), epoch)
+
+        self.history['test_loss'].append(np.mean(test_loss))
+        self.history['test_acc'].append(np.mean(acc_arr))
+    
+    def activate(self,train_loader, test_loader, n_features):
+        #torch.manual_seed(1111)
+        start_epoch = 1
+        schedule_step=self.num_epoch/2
+        scheduler = optim.lr_scheduler.StepLR(self.optimizer, step_size=schedule_step, gamma=0.1)
+        for epoch in range(start_epoch, start_epoch + self.num_epoch):
+            self.train(epoch, train_loader, n_features)
+            self.test(epoch, test_loader, n_features)
+            scheduler.step()
+        #elapsed_time = time.time() - start_time
+        #print(elapsed_time)
+
+        fig, ax = plt.subplots(nrows = 2, ncols = 1)
+        ax[0].plot(range(1, self.num_epoch+1), self.history['training_loss'], label='Training Loss')
+        ax[0].plot(range(1, self.num_epoch+1), self.history['test_loss'], label='Test Loss')
+        ax[0].set_xlabel('Epochs')
+        ax[0].set_ylabel('Loss')
+        ax[0].legend()
+        ax[1].plot(range(1, self.num_epoch+1), self.history['training_acc'], label='Training Accuracy')
+        ax[1].plot(range(1, self.num_epoch+1), self.history['test_acc'], label='Test Accuracy')
+        ax[1].set_xlabel('Epochs')
+        ax[1].set_ylabel('Accuracy')
+        ax[1].legend()
+        if not os.path.isdir(self.log_dir):
+            os.mkdir(self.log_dir)
+        pkl.dump(self.history, open(self.log_dir+'/history.pkl', 'wb'))
+        #pkl.dump(fig, open(self.log_dir+'/Loss_plot.pkl', 'wb'))
+
+        if not os.path.isdir(self.ckpt_dir):
+            os.makedirs(self.ckpt_dir)
+        torch.save(self.state, './%s/%s.pth' % (self.ckpt_dir, self.experiment_name))
+        plt.show()
+    def evaluate(self, test_loader_one,n_features,y_test_indexer):
+        self.model.load_state_dict(self.state['net'])
+        #self.model.eval() #Set model to evaluate
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        class_names=self.encoder.classes_
+        with torch.no_grad():
+            predictions = []
+            values = []
+            probabilities = np.empty((0,len(class_names)), float)
+
+            for x_test, y_test in test_loader_one:
+                x_test = x_test.view([1, -1, n_features]).to(device)
+                y_test = y_test.to(device)
+                self.model.eval()
+                out_logits = self.model(x_test)
+                yhat = self.fn_pred(out_logits)
+                yhat = yhat.to(device).detach().cpu()                
+                out_probs = (F.softmax(out_logits , dim=1)).numpy()
+                predictions.append(yhat.numpy())                
+                values.append(y_test.numpy())
+                probabilities = np.append(probabilities, out_probs, axis=0)
+        values = np.array(values).astype(int)
+        predictions = np.array(predictions).astype(int)
+        values = self.encoder.inverse_transform(values)
+        predictions = self.encoder.inverse_transform(predictions)        
+        probabilities = pd.DataFrame(data=probabilities, columns=class_names,index=y_test_indexer.index[-len(predictions):])
+        
+        self.df_results = pd.DataFrame({'Predictions':predictions,'Values': values},index=y_test_indexer.index[-len(predictions):])
+        self.df_results['Correct'] = np.where((self.df_results['Predictions']==self.df_results['Values']), True, False)        
+        self.df_results = self.df_results.merge(probabilities, left_index=True, right_index=True)      
+        self.df_results['Crash_sum']= self.df_results['High Crash Confidence']+self.df_results['Low Crash Confidence']+ self.df_results['Medium Crash Confidence']
+        self.df_results['Non_Crash_sum']= self.df_results['Large Appreciation']+self.df_results['Small Appreciation']+ self.df_results['Small deppreciation']
+        self.df_results['Predicted_prob']=self.df_results[['High Crash Confidence','Medium Crash Confidence','Low Crash Confidence','Small deppreciation','Small Appreciation','Large Appreciation']].max(axis=1)
+        idx, cols = pd.factorize(self.df_results['Values'])
+        self.df_results['Correct_prob']=self.df_results.reindex(cols, axis=1).to_numpy()[np.arange(len(self.df_results)), idx]
+              
+        if not os.path.isdir(self.log_dir):
+            os.mkdir(self.log_dir)
+        pkl.dump(self.df_results.to_dict(), open(self.log_dir+'/results.pkl', 'wb'))        
+        
+        return self.df_results
+    
+    def report(self):
+        #print(classification_report(self.df_results['Values'], self.df_results['Predictions']))
+        clx_report = pd.DataFrame(classification_report(self.df_results['Values'], self.df_results['Predictions'],output_dict=True)).transpose()
+        if not os.path.isdir(self.log_dir):
+            os.mkdir(self.log_dir)
+        pkl.dump(clx_report.to_dict(), open(self.log_dir+'/report.pkl', 'wb'))   
+        return clx_report
